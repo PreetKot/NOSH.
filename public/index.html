@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Manage your Nosh dishes with local drafts and safe, versioned saves.">
+  <title>Nosh · Dish dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/" aria-label="Nosh home">nosh<span>●</span></a><span class="workspace">Kitchen workspace</span></header>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">THE MENU, IN YOUR HANDS</p><h1>Dish dashboard<span>.</span></h1><p class="intro">A little care for every dish. Edit your menu, then save when it’s ready.</p></div><span class="local-label"><span></span> Local workspace</span></div>
+    <section class="summary" aria-label="Menu summary"><div><strong id="total-count">—</strong><span>Total dishes</span></div><div><strong id="published-count">—</strong><span>Published</span></div><div><strong id="draft-count">0</strong><span>Unsaved drafts</span></div></section>
+    <div class="section-heading"><h2>Your dishes</h2><span>Changes stay local until you save.</span></div>
+    <div id="load-state" role="status" aria-live="polite">Loading your dishes…</div>
+    <section id="dish-grid" class="dish-grid" aria-label="Dish editor"></section>
+    <noscript>This dashboard needs JavaScript to load and edit dishes.</noscript>
+    <footer>Made for thoughtful menu management. <span>Explicit saves. Safer updates.</span></footer>
+  </main>
+  <template id="dish-template">
+    <article class="dish-card">
+      <div class="image-wrap"><img alt="" loading="lazy"><div class="image-fallback" hidden><span aria-hidden="true">◌</span>Image unavailable</div><span class="saved-status"></span></div>
+      <div class="card-content">
+        <div class="dish-meta"><span class="dish-id"></span><span class="version"></span></div>
+        <h3 class="saved-name"></h3>
+        <form novalidate>
+          <label class="name-label">Dish name<input class="name-input" name="dishName" type="text" autocomplete="off"></label>
+          <label class="publish-label"><span>Publish this dish<small>Visible on the menu when saved</small></span><input class="publish-input" name="isPublished" type="checkbox" role="switch"></label>
+          <div class="edit-state" aria-live="polite"></div>
+          <div class="dish-error" role="alert" hidden></div>
+          <div class="conflict" hidden><p class="conflict-detail"></p><p>Reloading discards your local draft and loads the latest saved values.</p><button class="reload-button" type="button">Reload latest values</button></div>
+          <div class="actions"><button class="discard-button" type="button">Discard</button><button class="save-button" type="submit">Save changes <span aria-hidden="true">↗</span></button></div>
+        </form>
+      </div>
+    </article>
+  </template>
+</body>
+</html>

@@ -1,0 +1,8 @@
+[
+  {
+    "dishId": "test-invalid-image",
+    "dishName": "Isolated invalid-image fixture",
+    "imageUrl": "file:///not-an-http-image.jpg",
+    "isPublished": false
+  }
+]
