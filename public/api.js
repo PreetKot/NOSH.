@@ -16,7 +16,9 @@ function isDish(value) {
 
 export async function request(path, options = {}) {
   let response;
-  try { response = await fetch(path, { ...options, signal: AbortSignal.timeout(10000), cache: 'no-store' }); }
+  const timeout = AbortSignal.timeout(10000);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  try { response = await fetch(path, { ...options, signal, cache: 'no-store' }); }
   catch { throw new RequestError('Could not reach the server. Your draft is safe. Check the connection and try again.'); }
   let body;
   try { body = await response.json(); }
@@ -33,8 +35,8 @@ export async function request(path, options = {}) {
   return body;
 }
 
-export async function getDishes() {
-  const dishes = await request('/dishes');
+export async function getDishes(options = {}) {
+  const dishes = await request('/dishes', options);
   if (!Array.isArray(dishes) || !dishes.every(isDish)
       || new Set(dishes.map((dish) => dish.dishId)).size !== dishes.length) {
     throw new RequestError('The server returned an invalid dish list. Please try again.');

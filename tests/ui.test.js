@@ -260,7 +260,7 @@ test('a failed conflict reload preserves the draft and snapshot; retry fetches t
   const card = cardFor(page);
   await card.locator('.name-input').fill('Losing local draft');
   await patch(app.url, '1', { dishName: 'External version two', isPublished: false, expectedVersion: 1 });
-  // There is no background synchronization: external saves leave local drafts alone.
+  // Background synchronization must leave the dirty draft's fields/version alone.
   assert.equal(await card.locator('.name-input').inputValue(), 'Losing local draft');
   assert.equal(await card.locator('.version').innerText(), 'Version 1');
   await card.locator('.save-button').click();

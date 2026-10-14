@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
+import { createConnection } from 'node:net';
 import { openDatabase } from '../server/database.js';
 import { createApp } from '../server/app.js';
 import { suppliedRows, fixture, runningFixture, startServer, patch, list } from './helpers.js';
@@ -55,6 +56,18 @@ test('successful explicit status saves persist through a real backend process re
   const restarted = await startServer(app.filename);
   t.after(() => restarted.stop());
   assert.deepEqual((await list(restarted.url))[0], result.body);
+});
+
+test('backend shutdown closes speculative browser sockets without waiting for a request', async (t) => {
+  const app = await runningFixture(t);
+  const socket = createConnection({ host: '127.0.0.1', port: app.port });
+  await once(socket, 'connect');
+  let forced = false;
+  const guard = setTimeout(() => { forced = true; socket.destroy(); }, 2000);
+  try {
+    await app.stop();
+    assert.equal(forced, false, 'Shutdown must close a socket that has sent no HTTP data');
+  } finally { clearTimeout(guard); socket.destroy(); }
 });
 
 test('empty published names and invalid stored image URLs are rejected without changes', async (t) => {

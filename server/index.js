@@ -10,5 +10,10 @@ server.listen(port, process.env.HOST || '127.0.0.1', () => {
 });
 server.on('error', (error) => { console.error(error.message); store.close(); process.exitCode = 1; });
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));
+  process.on(signal, () => {
+    server.close(() => { store.close(); process.exit(0); });
+    // Browsers may open speculative sockets without sending an HTTP request.
+    // Close them too so a local stop/restart does not wait indefinitely.
+    server.closeAllConnections();
+  });
 }

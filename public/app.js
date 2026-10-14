@@ -1,9 +1,40 @@
 import { getDishes, saveDish } from './api.js';
+import { startPolling } from './sync.js';
 
 const grid = document.querySelector('#dish-grid');
 const loadState = document.querySelector('#load-state');
 const editors = [];
+let loaded = false;
+let active = true;
+let stopSync = null;
 const draftFrom = (dish) => ({ dishName: dish.dishName, isPublished: dish.isPublished });
+
+function startSync() {
+  if (!loaded || !active || stopSync) return;
+  const status = document.querySelector('#sync-state');
+  if (!status.classList.contains('disconnected')) status.textContent = 'Live updates on · checked every 3 seconds';
+  stopSync = startPolling({
+    read: getDishes,
+    onDishes(dishes) {
+      for (const dish of dishes) {
+        const editor = editors.find((item) => item.saved.dishId === dish.dishId);
+        editor?.receive(dish);
+      }
+    },
+    onConnection(connected) {
+      status.textContent = connected ? 'Live updates on · checked every 3 seconds'
+        : 'Live updates unavailable. Retrying automatically; your drafts are safe.';
+      status.classList.toggle('disconnected', !connected);
+    }
+  });
+}
+
+window.addEventListener('pagehide', () => {
+  active = false;
+  stopSync?.();
+  stopSync = null;
+});
+window.addEventListener('pageshow', () => { active = true; startSync(); });
 
 function updateSummary() {
   document.querySelector('#total-count').textContent = editors.length;
@@ -55,7 +86,7 @@ function createEditor(dish) {
     find('.edit-state').textContent = state.pending ? 'Contacting the server…' : state.dirty() ? '● Unsaved changes' : state.notice || 'All changes saved';
     find('.dish-error').textContent = state.error;
     find('.dish-error').hidden = !state.error;
-    find('.conflict').hidden = !state.hasConflict;
+    find('.conflict').hidden = !state.hasConflict && !state.currentDish;
     if (state.currentDish) {
       find('.conflict-detail').textContent = `Newer saved value: “${state.currentDish.dishName || 'Untitled dish'}” · ${state.currentDish.isPublished ? 'Published' : 'Unpublished'} · Version ${state.currentDish.version}. Your draft is still based on version ${state.saved.version}.`;
     } else if (state.hasConflict) {
@@ -68,6 +99,28 @@ function createEditor(dish) {
     name.disabled = published.disabled = state.pending;
     updateSummary();
   }
+
+  function replaceSaved(saved, notice) {
+    state.saved = saved;
+    state.draft = draftFrom(saved);
+    state.currentDish = null;
+    state.hasConflict = false;
+    state.error = '';
+    state.notice = notice;
+    name.value = saved.dishName;
+    published.checked = saved.isPublished;
+  }
+
+  state.receive = (incoming) => {
+    // Recheck live draft/pending state at response time, not at poll start.
+    if (state.pending || incoming.version <= state.saved.version) return;
+    if (state.dirty()) {
+      if (!state.currentDish || incoming.version > state.currentDish.version) state.currentDish = incoming;
+    } else {
+      replaceSaved(incoming, 'Updated from server');
+    }
+    render();
+  };
 
   name.addEventListener('input', () => { state.draft.dishName = name.value; state.notice = ''; render(); });
   published.addEventListener('change', () => { state.draft.isPublished = published.checked; state.notice = ''; render(); });
@@ -87,19 +140,16 @@ function createEditor(dish) {
     render();
     try {
       const saved = await saveDish(state.saved.dishId, state.draft, state.saved.version);
-      state.saved = saved;
-      state.draft = draftFrom(saved);
-      state.currentDish = null;
-      state.hasConflict = false;
-      state.notice = 'Saved successfully';
-      name.value = saved.dishName;
-      published.checked = saved.isPublished;
+      replaceSaved(saved, 'Saved successfully');
     } catch (error) {
       state.error = error.message;
       // A conflict never advances the snapshot/version associated with this draft.
       if (error.status === 409) {
         state.hasConflict = true;
-        state.currentDish = error.currentDish?.dishId === state.saved.dishId ? error.currentDish : null;
+        if (error.currentDish?.dishId === state.saved.dishId
+            && (!state.currentDish || error.currentDish.version >= state.currentDish.version)) {
+          state.currentDish = error.currentDish;
+        }
       }
     } finally { state.pending = false; render(); }
   });
@@ -110,14 +160,7 @@ function createEditor(dish) {
     try {
       const latest = (await getDishes()).find((item) => item.dishId === state.saved.dishId);
       if (!latest) throw new Error('This dish is no longer available. Your draft has been preserved.');
-      state.saved = latest;
-      state.draft = draftFrom(latest);
-      state.currentDish = null;
-      state.hasConflict = false;
-      state.error = '';
-      state.notice = 'Latest saved values loaded';
-      name.value = latest.dishName;
-      published.checked = latest.isPublished;
+      replaceSaved(latest, 'Latest saved values loaded');
     } catch (error) { state.error = error.message; }
     finally { state.pending = false; render(); }
   });
@@ -135,6 +178,8 @@ async function load() {
     updateSummary();
     if (!dishes.length) loadState.textContent = 'No dishes yet. Run npm run seed, then refresh this page.';
     else loadState.hidden = true;
+    loaded = true;
+    startSync();
   } catch (error) {
     loadState.textContent = `Could not load dishes. ${error.message} `;
     const retry = document.createElement('button');

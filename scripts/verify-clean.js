@@ -69,7 +69,7 @@ try {
   assert.match(run('run', 'seed'), /5 inserted, 0 existing dishes preserved/);
   assert.match(run('run', 'seed'), /0 inserted, 5 existing dishes preserved/);
   let url = await start();
-  for (const path of ['/', '/app.js', '/api.js', '/styles.css']) {
+  for (const path of ['/', '/app.js', '/api.js', '/sync.js', '/styles.css']) {
     assert.equal((await fetch(`${url}${path}`, { signal: AbortSignal.timeout(10000) })).status, 200, path);
   }
   const supplied = JSON.parse(await readFile(new URL('data/dishes.json', root), 'utf8'));

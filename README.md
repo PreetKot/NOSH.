@@ -8,10 +8,10 @@ A locally runnable dish editor with persistent SQLite storage, explicit Save/Dis
 - A modern browser. Google Chrome is needed for the default browser test command, but not for running the application.
 - No separate database installation, API keys, or required build step.
 
-Clone the repository URL supplied in the submission chat, then enter it. Replace `REPOSITORY_URL` below with that real URL; a GitHub remote has not yet been configured for this workspace.
+Clone the assignment repository, then enter it:
 
 ```sh
-git clone REPOSITORY_URL nosh-dish-dashboard
+git clone https://github.com/PreetKot/NOSH..git nosh-dish-dashboard
 cd nosh-dish-dashboard
 ```
 
@@ -32,7 +32,7 @@ To build the frontend assets explicitly:
 npm run build
 ```
 
-The frontend uses native browser modules. This dependency-free build checks JavaScript syntax and stages `index.html`, `app.js`, `api.js`, and `styles.css` in ignored `dist/`. No transpilation is needed. The local backend serves the source assets from `public/`, so normal development does not require a build. The staged frontend still needs the API on the same origin.
+The frontend uses native browser modules. This dependency-free build checks JavaScript syntax and stages `index.html`, `app.js`, `api.js`, `sync.js`, and `styles.css` in ignored `dist/`. No transpilation is needed. The local backend serves the source assets from `public/`, so normal development does not require a build. The staged frontend still needs the API on the same origin.
 
 `.env` is optional; these are the defaults:
 
@@ -172,7 +172,7 @@ Validation failures and conflicts roll back without changing any dish field or v
 ## Architecture and design decision
 
 ```text
-public/index.html + app.js + styles.css
+public/index.html + app.js + sync.js + styles.css
               │ same-origin fetch through public/api.js
               ▼
 server/app.js   HTTP routing, JSON parsing, error responses
@@ -186,9 +186,36 @@ Plain JavaScript keeps this small assignment readable without a frontend framewo
 
 **Design decision: optimistic concurrency with an atomic SQLite transaction.** `BEGIN IMMEDIATE` acquires a database write lock before reading the stored dish. The same transaction checks the version and stored image, then executes `UPDATE ... WHERE dishId = ? AND version = ? RETURNING *`. The successful update increments the version; failures roll back. The SQL predicate explicitly guards the write. WAL and a five-second busy timeout accommodate the small local workload. This also protects updates made through independent backend processes sharing the file.
 
-Each dish editor has three separate values: the last loaded/saved snapshot, an editable local draft, and an optional conflict `currentDish`. Save sends the version from the snapshot. Success replaces both snapshot and draft with the returned values. Failure leaves the draft intact. A conflict never advances its version or automatically retries. Save is blocked until an explicit conflict reload; reload fetches the latest record and requires confirmation that the draft will be lost. Discard restores the original snapshot, even after a conflict. Fields and actions are disabled during a request to avoid editing a draft while its save is in flight.
+Each dish editor has three separate values: the last loaded/saved snapshot, an editable local draft, and an optional newer server `currentDish`. Save sends the version from the snapshot. Success replaces both snapshot and draft with the returned values. Failure leaves the draft intact. A 409 never advances its version or automatically retries; it blocks further saves while the conflict is unresolved. Reload fetches the latest record and requires confirmation that the draft will be lost. Discard restores the original snapshot, even after a conflict; with the bonus enabled, a later poll may refresh that now-clean dish. Fields and actions are disabled during a request to avoid editing a draft while its save is in flight.
 
 Network/timeout, validation, and server failures appear next to the dish. The request helper safely catches non-JSON responses and validates the backend's array/dish shapes before replacing any state. A malformed success response preserves the draft and original snapshot. Even an unreadable 409 blocks stale retries and offers a confirmed reload; a failed reload preserves the draft and conflict details. Each dish's pending state and errors are independent. Explicit reload also refreshes the displayed image from the loaded snapshot. The dashboard includes loading, empty, retry, unsaved indicators, published/version metadata, responsive cards, labeled controls, and image-error fallbacks.
+
+## Optional bonus: external updates
+
+**Implemented with a three-second polling interval.** After the initial list loads successfully, `public/sync.js` reads the existing `GET /dishes` endpoint every 3,000 ms. No new API, server event channel, database schema, or runtime dependency is required.
+
+- For a clean dish, a higher server version replaces its saved snapshot and form fields, including name, image, status, and version. The summary updates too.
+- For a dirty dish, both draft fields and its original saved snapshot/version remain intact. A notice displays the newer saved dish/status/version separately. Reload requires confirmation that the draft will be discarded and fetches the latest server values. Discard restores the original snapshot; a subsequent poll may refresh that now-clean dish. An explicit stale Save still sends the original version and receives the normal 409; polling never submits or retries PATCH.
+- Poll responses recheck the current draft at arrival. Older/equal versions are ignored, and a dish with Save or Reload in flight is skipped until a later poll, avoiding replacement during its request.
+- A failed read keeps all current cards, drafts, and per-dish errors. A page-level message says live updates are temporarily unavailable. Polling continues and clears that message after a successful read. One request is allowed at a time; requests time out after ten seconds, so slow/disconnected requests do not accumulate.
+- `pagehide` clears the timer and aborts an active poll. Late responses are ignored. `pageshow` restarts polling once, including after back/forward-cache restoration. This plain-JavaScript page has no framework unmount lifecycle; navigation/page teardown is its equivalent.
+
+On a healthy foreground page, an external save normally appears within **0–3 seconds plus request time**. Slow requests, browser timer throttling, or a temporary disconnection can extend that delay. This trades immediate push delivery for one small GET every three seconds per open page and no connection infrastructure. Direct database edits are not part of the bonus contract. Only higher-version updates to loaded dishes are synchronized; creation/deletion is outside scope.
+
+To reproduce with the dashboard open, read the current version and use it in PATCH (the example assumes dish `1` is version 1):
+
+```sh
+curl -s http://127.0.0.1:3000/dishes
+curl -i -X PATCH http://127.0.0.1:3000/dishes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"dishName":"External API update","isPublished":false,"expectedVersion":1}'
+```
+
+Watch a clean card update without refreshing. Next, edit its name and switch locally, make another API update using the current server version, and wait for the newer-data notice: neither draft field nor the original displayed version should change. Cancel Reload to keep the draft or confirm it to load the newest saved values. Stop the backend with Ctrl+C, wait for the connection notice, restart with the same database/port, and watch polling recover without a page refresh. The focused tests exercise these flows and teardown:
+
+```sh
+npm run test:bonus
+```
 
 ## Automated verification
 
@@ -197,7 +224,8 @@ npm run verify:clean
 npm run build
 npm test
 npm run test:ui
-# Or both in sequence:
+npm run test:bonus
+# Or all test suites in sequence:
 npm run test:all
 ```
 
@@ -220,15 +248,19 @@ Actual results on October 13, 2026:
 | `npm install --ignore-scripts --cache /tmp/nosh-npm-cache` | Installed locked development packages; audit reported 0 vulnerabilities |
 | `npm run seed` twice | First: 5 inserted; second: 0 inserted, 5 preserved |
 | `node --check public/app.js` and `node --check server/app.js` | Passed |
-| `npm test` | 13/13 passed, including the backend follow-up checks |
+| `npm test` | 14/14 passed, including shutdown with a speculative browser socket |
 | `npm run verify:clean` | Passed from a fresh directory/cache: `npm ci`, build, two seeds, HTTP readiness, saved edit, reseed, and backend restart |
-| `npm run build` | Passed; four frontend assets staged in `dist/` |
+| `npm run build` | Passed; five frontend assets staged in `dist/` |
 | `npm run test:ui` with Google Chrome | 12/12 passed, no uncaught browser errors |
-| `npm run build && npm run test:all` in the final audit | Passed: build, 13 API tests, and 12 Chrome tests |
+| Core prerequisite before the bonus: `npm run build && npm run test:all` | Passed after shutdown fix: build, 14 API tests, and 12 core Chrome tests |
+| `npm run test:bonus` | 6/6 passed: four Chrome flows plus two timer/cancellation/recovery unit checks |
+| Final `npm run build && npm run test:all && npm run verify:clean` | Passed after bonus implementation: 5 build assets, 14 API tests, 12 core Chrome tests, 6 bonus checks, and fresh-cache install/seed/start/restart verification |
 | Desktop 1440px / mobile 390px layout | Screenshots inspected; no horizontal overflow in browser assertions |
 | `npm start` and live Chrome preview | Dashboard returned HTTP 200; all five original images loaded |
 
 The first sandboxed API run was blocked by `listen EPERM` on loopback; the complete suite passed after granting permission to bind local ports. The initial offline dependency-install attempt lacked cached npm metadata; the network-enabled install succeeded. These were environment restrictions, not passing test runs.
+
+Before implementing the bonus, the core outage check exposed shutdown waiting on a speculative browser TCP connection that had sent no HTTP request. The backend now closes all connections when stopped; a new API regression test verifies that case. The entire required suite and clean setup then passed before polling was added. Early parallel bonus runs were stopped while diagnosing slow Chrome teardown and are not counted as successful suite runs; the complete focused rerun passed 6/6. Chrome teardown can add time after the assertions finish. No temporary test diagnostics remain in the source.
 
 The API suite verifies the supplied records/version types, actual reseeding of a partial database after name/status/image edits (four missing IDs inserted, then zero), explicit boolean updates, real process-restart persistence, empty-name rejection, invalid stored image rejection, trimmed unpublished empty names, payload/ID/JSON errors (including raw dot-segment identifiers), stale conflicts, two simultaneous writes through separate backend processes, atomic seed failure, and JSON 500 handling. The image edit is made only in an isolated temporary test database; the supplied JSON is unchanged. The browser suite verifies draft/discard without any PATCH, the exact Save payload and pending state, trimmed saved values across refresh/restart, validation correction, stale two-tab conflicts and reload confirmation, actual backend-unavailable recovery, HTML/JSON errors, loading/empty/fetch-error states, responsive broken-image rendering, independent dish errors/pending drafts, malformed success/list responses, failed conflict reload preservation, and unreadable-conflict recovery.
 
@@ -238,7 +270,7 @@ The PDF was reread for this audit; the secondary spec did not override it. The f
 
 | Required item | Evidence / outcome |
 | --- | --- |
-| Clean install, configuration, seed, start | `npm run verify:clean`: actual fresh-cache `npm ci`, example `.env`, two seed runs, `npm start`, and all four static routes returned 200 |
+| Clean install, configuration, seed, start | `npm run verify:clean`: actual fresh-cache `npm ci`, example `.env`, two seed runs, `npm start`, and static routes returned 200 |
 | Supplied persistent records, unique IDs, version 1 | API `GET returns all supplied dishes...`: exact supplied records/booleans/version 1; SQLite primary key; JSON hash unchanged |
 | Reseed inserts missing IDs and preserves all edits | API `real seed command inserts only missing IDs...`: partial database with edited name, status, image, and version; 4 inserted/1 preserved, then 0 inserted/5 preserved |
 | GET contains all five required fields | Exact record assertions in API suite and clean-setup verification |
@@ -255,9 +287,9 @@ The PDF was reread for this audit; the secondary spec did not override it. The f
 | Failed conflict reload / independent dishes | Chrome tests retain conflict/draft through failed reload; independently pending/saved/failed cards do not mix state |
 | Loading, empty, fetch error, broken images, mobile | Chrome state/layout tests pass; 390px mobile and 1440px desktop have no horizontal overflow; generated screenshots inspected |
 | Documentation, safe example environment | This README and `.env.example`; environment file contains local settings and no credentials |
-| GitHub repository/access, branch and final SHA in Internshala | **Pending external submission.** Local Git tracking can be verified with the commands below; no GitHub publication/access grant/chat submission is claimed |
-| Actual total effort and any additional reuse | **Pending author confirmation.** The original 10-minute figure covered only the first implementation pass and is not a total |
-| Optional synchronization | **Not implemented**, as requested; excluded from required checks |
+| GitHub repository/access, branch and final SHA in Internshala | Repository: `PreetKot/NOSH.`; branch `main`; obtain the exact submission SHA with `git rev-parse HEAD`. Internshala submission and reviewer-specific access remain to be confirmed |
+| Actual total effort and AI/reuse disclosure | **Author-reported total: 1–2 days**, including preparation/review. OpenAI Codex and third-party dependencies/assets are disclosed below |
+| Optional synchronization | **Implemented separately after core passed**: three-second polling; focused verification command and behavior documented above |
 
 ### Isolated invalid-image reproduction
 
@@ -294,28 +326,45 @@ These are reproducible steps; the equivalent acceptance flows were executed by t
 
 ## Limitations, effort, and disclosure
 
-- **Optional external-update synchronization: not implemented.** It was not requested. There is no polling, SSE, or WebSocket timer. External saves are discovered on explicit reload or stale-save conflict.
+- **Optional external-update synchronization: implemented.** Three-second polling is eventually consistent, subject to request delay and browser throttling; it preserves dirty drafts and original versions.
 - Drafts live in the open page's memory. Refreshing/navigating away loses unsaved drafts; persisted server values survive. Only saved records are durable.
 - Supplied images load directly from their original URLs; all five loaded in the live preview, but future availability is not guaranteed and the fallback handles failures. Optional Google Fonts fall back to system fonts when unavailable. Cross-browser testing beyond the installed Chrome was not performed.
 - The synchronous SQLite driver suits a small local assignment; this is not production infrastructure. Authentication, uploads, creation/deletion, pagination, deployment, and approval workflows are outside scope.
-- **Approximate total time spent: pending author confirmation.** The earlier 10-minute figure described only the initial AI-assisted implementation pass. Subsequent backend, frontend, and audit work occurred in later turns. The contributor's preparation/review time and honest overall total cannot be inferred; the author has been asked to provide them. Complete this field before submitting.
-- **AI/reuse disclosure, verified in this conversation:** OpenAI Codex generated the application, tests, styling, setup verification, and README, and ran the recorded checks. The PDF and existing spec guided requirements. The seed JSON and image URLs come from Nosh; Google Fonts are optional external font assets; Playwright is a third-party browser-test dependency, with its dependencies recorded in `package-lock.json`. No application code was copied from another repository or starter during this conversation. The Sites skill was used for its local-only workflow; no site was registered or published. **Additional author-used AI tools or borrowed code: pending author confirmation.** The author has been asked for facts outside this conversation. Review and understand the implementation before the follow-up discussion.
+- **Approximate total time spent: 1–2 days**, as reported by the author, including preparation and review. No conversion into hours is assumed.
+
+## AI and reused assets
+
+**AI tool used: OpenAI Codex.** Codex was used as the coding assistant to implement the frontend and backend, write tests, debug failures, verify setup, and prepare documentation. This project is AI-assisted work, and that use is disclosed explicitly.
+
+The assignment PDF defined the requirements; the existing secondary spec was a checklist. Nosh supplied the seed JSON and dish image URLs. Google Fonts provides the optional DM Sans and Manrope fonts. Playwright is the third-party browser-test dependency; its pinned dependencies are in `package-lock.json`. The application uses Node's built-in HTTP, SQLite, and test modules. No application code was copied from another repository or starter during the documented implementation. The Sites skill guided the local frontend workflow; no hosted site was created.
+
+## Implementation timeline
+
+The dates below follow the recorded work sessions in Asia/Kolkata time, with the implementation stages listed in order. The author's reported overall effort is **1–2 days**.
+
+| When | What we completed | How we did it |
+| --- | --- | --- |
+| October 13, 2026 | Requirements and supplied data | Read the PDF first, compared the secondary checklist, and downloaded the supplied Drive JSON without substituting data. |
+| October 13, 2026 | Persistent backend and seeding | Used SQLite with unique dish IDs and version 1 inserts; made reseeding insert only missing records and preserve edits. |
+| October 13, 2026 | Safe update API | Implemented GET/PATCH, server-side validation, and a transaction with a version-conditioned update to reject stale writes. |
+| October 13, 2026 | Dish dashboard and local drafts | Built responsive cards with separate saved/draft state, explicit Save/Discard, per-dish errors, and confirmed conflict reloads. |
+| October 13, 2026 | Core verification and fixes | Ran API and Chrome tests for persistence, concurrency, invalid input, conflicts, outage retry, and mobile states; fixed identifier routing and speculative-socket shutdown. |
+| October 13, 2026 | Optional synchronization bonus | Added three-second polling after the core passed, preserving dirty drafts and handling disconnect/reconnect and timer cleanup. |
+| October 13, 2026 | Submission audit | Verified clean install/seed/start, reran the build and all 32 checks, inspected tracked files for secrets/artifacts, and prepared submission information. |
+| October 14, 2026 | Documentation and GitHub handoff | Added the explicit Codex disclosure, recorded this timeline, and prepared the final source and documentation for the requested `main` branch push. |
 
 ## GitHub submission
 
-This starting directory had no `.git` repository or configured remote. The audit prepares local application tracking, including `.env.example`; verify it using `git ls-files .env.example` and obtain the actual commit with `git rev-parse HEAD`. No GitHub repository, access grant, or Internshala submission is claimed. Complete the pending time/reuse fields above, create an empty GitHub repository that the hiring team can access, then run the following from this directory. Replace the example remote with your actual repository URL:
+The final acceptance/status table and unsent Internshala/Google Form drafts are in [SUBMISSION-AUDIT.md](SUBMISSION-AUDIT.md). The later guide's [Google Form](https://forms.gle/zegbxdqL1awBEKzp6) is an additional channel; the PDF still explicitly requires the repository URL, branch, final SHA, bonus status, and effort in Internshala chat.
+
+Repository: [PreetKot/NOSH.](https://github.com/PreetKot/NOSH.). Submission branch: **`main`**. Use the SHA of the exact committed version you submit, rather than an older core-only commit. These commands identify that version:
 
 ```sh
-npm run test:all
-git add .gitignore .env.example package.json package-lock.json README.md server public scripts data/dishes.json tests
-git commit -m "Finalize assignment disclosure and submission"
-git remote add origin https://github.com/YOUR_ACCOUNT/YOUR_REPOSITORY.git
-git push -u origin main
 git remote get-url origin
 git branch --show-current
 git rev-parse HEAD
 ```
 
-The explicit `git add` includes every required application file, seed, fixture, dependency file, and README. The local database, `.env`, generated screenshots, and `node_modules` remain excluded. Your pre-existing PDF, spec, and prompt documents remain in this workspace and need not be part of the application submission.
+The application source, seed, fixtures, dependency files, README, submission audit, and safe `.env.example` belong in Git. The local database, real `.env`, generated build/screenshots, and `node_modules` are excluded. The pre-existing PDF, spec, and prompt documents remain local reference material and are not required application assets.
 
-Send the actual repository URL, branch, final SHA, “Optional bonus: not implemented”, and your confirmed approximate total time in the Internshala chat. If private, obtain the hiring team's reviewer account and grant access before submitting. Submit the repository, not a ZIP or video.
+Send the actual repository URL, branch, final SHA, “Optional bonus: implemented with three-second polling”, and your confirmed approximate total time in the Internshala chat. If private, obtain the hiring team's reviewer account and grant access before submitting. Submit the repository, not a ZIP or video.
