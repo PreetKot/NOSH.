@@ -6,6 +6,8 @@ A responsive dish editor with persistent SQLite storage, local Save/Discard draf
 
 **Requires:** Node.js **22.13+**, npm, and a modern browser. No separate database service or API keys are needed.
 
+If you use nvm, run `nvm install` and `nvm use` to select the Node 22 version specified in `.nvmrc`.
+
 ```sh
 git clone https://github.com/PreetKot/NOSH..git nosh-dish-dashboard
 cd nosh-dish-dashboard
@@ -27,6 +29,8 @@ SEED_FILE=./data/dishes.json
 ```
 
 The five supplied dishes are bundled in [`data/dishes.json`](data/dishes.json), downloaded from the [PDF's Drive link](https://drive.google.com/file/d/1iOh0c2r919zNUAz2FHqOSeZBjxjXglj1/view?usp=share_link). New dishes start at **version 1**. Rerunning `npm run seed` inserts only missing IDs and preserves existing names, image URLs, statuses, and versions. Saved data survives restarts in `data/nosh.sqlite`; keep that file between runs.
+
+No separate migration step is needed. The schema is created automatically when the database is first opened by the seed command or server, in [`server/database.js`](server/database.js).
 
 ## API
 
@@ -120,7 +124,7 @@ npm run build         # Validate browser JS and stage five static assets in dist
 npm run test:all       # API, core browser and bonus suites
 ```
 
-**Last run: October 14, 2026 — all passed.** The API suite has **14 tests**, core browser suite **12**, and bonus suite **6**. Coverage includes validation without mutation, concurrent writes, stale two-tab conflicts, drafts/Discard, pending Save, outage retry, and loading/empty/error/image/mobile states. Tests use isolated databases; the build is optional for local use because the backend serves `public/` directly.
+**Last run: October 15, 2026 — all passed.** The API suite has **14 tests**, core browser suite **12**, and bonus suite **6**. Coverage includes validation without mutation, concurrent writes, stale two-tab conflicts, drafts/Discard, pending Save, outage retry, and loading/empty/error/image/mobile states. Tests use isolated databases; the build is optional for local use because the backend serves `public/` directly.
 
 Browser tests use installed Google Chrome. Without Chrome:
 
@@ -175,7 +179,7 @@ To verify, PATCH a dish externally while the page is open, first with a clean ca
 
 ## Timeline and disclosure
 
-**Total effort: 1–2 days**, reported by the author, including preparation and review. Dates use Asia/Kolkata time.
+I spent approximately **8–10 hours in total** on this assignment, including the required task and the polling bonus. Dates below use Asia/Kolkata time.
 
 | Date | Stage | Approach |
 | --- | --- | --- |
@@ -184,8 +188,9 @@ To verify, PATCH a dish externally while the page is open, first with a clean ca
 | Oct 13, 2026 | Frontend | Built responsive editors with separate drafts, Save/Discard and conflict recovery. |
 | Oct 13, 2026 | Verification and bonus | Tested core acceptance flows, fixed failures, then added polling and cleanup tests. |
 | Oct 14, 2026 | Handoff | Reran all 32 checks and clean setup, documented Codex use, and pushed to GitHub. |
+| Oct 15, 2026 | Review cleanup | Removed submission work logs, clarified setup and disclosure, and formatted the frontend source. |
 
-**AI tool used: OpenAI Codex**, for implementation, tests, debugging and documentation. Reused resources: Nosh's supplied JSON/images, optional Google Fonts, and Playwright for browser tests. No application code was copied from another repository or starter during the documented work.
+I used **OpenAI Codex** to help implement the frontend and backend, write and run tests, debug issues, and prepare documentation. I reviewed the README and directed revisions to its structure, timeline, AI disclosure, and submission presentation. I used Nosh's supplied JSON/images, optional Google Fonts, and Playwright for browser tests. No application code was copied from another repository or starter during the documented work.
 
 ## Limitations and submission
 
@@ -193,6 +198,4 @@ To verify, PATCH a dish externally while the page is open, first with a clean ca
 - External images/fonts may fail; fallbacks are provided. Browser verification covered Chrome.
 - Authentication, uploads, dish creation/deletion, pagination and production deployment are outside scope. No required application work remains incomplete.
 
-Branch: **`main`**. Obtain the final submission SHA with `git rev-parse HEAD`. Send the repository URL, branch, SHA, bonus status and effort in **Internshala**, as required by the PDF. If private, grant the hiring team's reviewer account access.
-
-Detailed acceptance evidence and unsent submission drafts, including the additional Google Form, are in [SUBMISSION-AUDIT.md](SUBMISSION-AUDIT.md).
+Branch: **`main`**.
